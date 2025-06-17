@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
     pb.enable_steady_tick(Duration::from_millis(100));
     pb.set_style(
         indicatif::ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] [{pos}/{len}]")
+            .template("[{elapsed_precise}] [{wide_bar:.orange/yellow}] [{pos}/{len}]")
             .unwrap()
             .progress_chars("=>-"),
     );
