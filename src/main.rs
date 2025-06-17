@@ -2,9 +2,8 @@ use std::sync::{Arc, LazyLock, OnceLock};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use indicatif::MultiProgress;
+use indicatif::{MultiProgress, ProgressBar};
 use reqwest::{Client, Proxy};
-use tokio::task::JoinSet;
 
 use crate::config::Config;
 
@@ -41,10 +40,21 @@ async fn main() -> Result<()> {
         std::process::exit(1);
     })?;
 
-    for mut g in gallerys {
+    let pb = PB.add(ProgressBar::new(gallerys.len() as u64));
+    pb.set_style(
+        indicatif::ProgressStyle::default_bar()
+            .template("[{elapsed_precise}] {wide_bar:cyan/blue}")
+            .unwrap()
+            .progress_chars("=>-"),
+    );
+
+    for g in gallerys {
         let config = Arc::clone(&config);
         g.download(config).await;
+        pb.inc(1);
     }
+
+    pb.finish_with_message("All downloads completed");
 
     Ok(())
 }

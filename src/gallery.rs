@@ -1,10 +1,11 @@
-use std::sync::Arc;
-
 use anyhow::Result;
+use futures_util::StreamExt;
+use indicatif::ProgressBar;
 use reqwest::Url;
+use std::{io::Write, path::PathBuf, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 
-use crate::{CLIENT, config::Config, error, info};
+use crate::{CLIENT, PB, SEM, config::Config, error, info};
 
 #[derive(Debug)]
 pub struct Gallery {
@@ -94,27 +95,7 @@ impl Gallery {
         Ok(())
     }
 
-    pub async fn download_image(&mut self, config: Arc<Config>, index: usize) -> Result<()> {
-        for image_url in &self.images {
-            let response = CLIENT
-                .get()
-                .unwrap()
-                .get(image_url.as_str())
-                .header("Cookie", &config.cookie)
-                .send()
-                .await?
-                .bytes()
-                .await?;
-
-            // Here you would implement the logic to save the image bytes to a file
-            // For now, we just print the image URL
-            info!("Downloading image: {}", image_url);
-        }
-
-        Ok(())
-    }
-
-    pub async fn download(&mut self, config: Arc<Config>) {
+    pub async fn download(mut self, config: Arc<Config>) {
         if let Err(e) = self.fetch_info(Arc::clone(&config)).await {
             error!("Failed to fetch gallery info: {}", e);
             return;
@@ -128,15 +109,66 @@ impl Gallery {
         info!("Downloading gallery: {}", self.title);
 
         let mut tasks = JoinSet::new();
+        let pb = Arc::new(PB.add(ProgressBar::new(self.images.len() as u64)));
+        pb.enable_steady_tick(Duration::from_millis(100));
+        pb.set_style(
+            indicatif::ProgressStyle::default_bar()
+                .template("[{wide_bar:cyan/blue}] [{pos}/{len}] [{msg}] ({elapsed_precise})")
+                .unwrap()
+                .progress_chars("=>-"),
+        );
 
-        self.images.iter().enumerate().for_each(|(index, _)| {
-            let config = Arc::clone(&config);
+        let title = Arc::new(self.title);
+
+        for (index, image_url) in self.images.into_iter().enumerate() {
+            let title = Arc::clone(&title);
+            let ext = image_url.as_str().rsplit('.').next().unwrap_or("jpg");
+            let output_path = format!("{}/{}/{}.{}", config.output, title, index, ext);
+            let pb = Arc::clone(&pb);
             tasks.spawn(async move {
-                if let Err(e) = self.download_image(config, index).await {
-                    error!("Failed to download image {}: {}", index, e);
-                }
+                let _limit = SEM.get().unwrap().acquire().await;
+                pb.set_message(format!("Downloading {} image {}", title, index + 1));
+                download(output_path, image_url).await;
+                pb.inc(1);
             });
+        }
+
+        tasks.join_all().await;
+
+        pb.finish_and_clear();
+    }
+}
+
+async fn download(output_path: String, url: Url) {
+    let output_path = PathBuf::from(output_path);
+    if !output_path.exists() {
+        let _ = std::fs::create_dir_all(output_path.parent().unwrap()).map_err(|e| {
+            error!("Failed to create output directory: {}", e);
+            std::process::exit(1);
         });
+    }
+
+    let response = CLIENT
+        .get()
+        .unwrap()
+        .get(url.as_str())
+        .send()
+        .await
+        .expect("Failed to send request");
+
+    if response.status().is_success() {
+        let mut stream = response.bytes_stream();
+        let mut file = std::fs::File::create(output_path).expect("Failed to create file");
+        while let Some(chunk) = stream.next().await {
+            let chunk = chunk.expect("Failed to read chunk");
+            file.write_all(&chunk).expect("Failed to write chunk");
+        }
+    } else {
+        error!(
+            "Failed to download image from {}, status: {}",
+            url,
+            response.status()
+        );
     }
 }
 
