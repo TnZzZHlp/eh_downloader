@@ -1,5 +1,4 @@
 use anyhow::Result;
-use futures_util::StreamExt;
 use indicatif::ProgressBar;
 use reqwest::Url;
 use retrying::retry;
@@ -182,8 +181,7 @@ async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config
             .get(image_url.as_str())
             .header("Cookie", &config.cookie)
             .send()
-            .await
-            .expect("Failed to send request for image redirect");
+            .await?;
 
         if redirect_url.status().is_redirection() {
             if let Some(location) = redirect_url.headers().get(reqwest::header::LOCATION) {
@@ -207,6 +205,17 @@ async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config
         anyhow::bail!("No image found");
     }
 
+    let ext = image_url.rsplit('.').next().unwrap_or("jpg");
+    let output_dir = PathBuf::from(&format!("{}/{}", config.output, title));
+    if !output_dir.exists() {
+        std::fs::create_dir_all(&output_dir).expect("Failed to create output directory");
+    }
+    let file_path = output_dir.join(format!("{}.{}", index + 1, ext));
+
+    if file_path.exists() {
+        return Ok(());
+    }
+
     let response = CLIENT
         .get()
         .ok_or(anyhow::anyhow!("Failed to create request for image"))?
@@ -223,21 +232,11 @@ async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config
         anyhow::bail!("Failed to download image");
     }
 
-    let ext = image_url.rsplit('.').next().unwrap_or("jpg");
-    let output_dir = PathBuf::from(&format!("{}/{}", config.output, title));
-    if !output_dir.exists() {
-        std::fs::create_dir_all(&output_dir).expect("Failed to create output directory");
-    }
-
-    let file_path = output_dir.join(format!("{}.{}", index + 1, ext));
     let mut file = std::fs::File::create(&file_path).expect("Failed to create file");
 
-    let mut stream = response.bytes_stream();
+    let content = response.bytes().await?;
 
-    while let Some(bytes) = stream.next().await {
-        file.write_all(&bytes.unwrap())
-            .expect("Failed to write chunk to file");
-    }
+    file.write_all(&content).expect("Failed to write to file");
 
     Ok(())
 }
