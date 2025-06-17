@@ -33,7 +33,7 @@ impl Gallery {
             .send()
             .await?;
 
-        if response.status().is_success() {
+        if !response.status().is_success() {
             anyhow::bail!(
                 "Failed to fetch gallery info, status: {}",
                 response.status()
