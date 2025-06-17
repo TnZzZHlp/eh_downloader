@@ -2,6 +2,7 @@ use anyhow::Result;
 use futures_util::StreamExt;
 use indicatif::ProgressBar;
 use reqwest::Url;
+use retrying::retry;
 use std::{io::Write, path::PathBuf, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 
@@ -30,11 +31,16 @@ impl Gallery {
             .get(self.url.as_str())
             .header("Cookie", &config.cookie)
             .send()
-            .await?
-            .text()
             .await?;
 
-        let document = scraper::Html::parse_document(&response);
+        if response.status().is_success() {
+            anyhow::bail!(
+                "Failed to fetch gallery info, status: {}",
+                response.status()
+            );
+        }
+
+        let document = scraper::Html::parse_document(&response.text().await?);
         let title = document
             .select(&scraper::Selector::parse("#gn").unwrap())
             .next()
@@ -128,7 +134,7 @@ impl Gallery {
             tasks.spawn(async move {
                 let _limit = SEM.get().unwrap().acquire().await;
                 pb.set_message(format!("Downloading image {}", index + 1));
-                download(index, title, image_url, config).await;
+                let _ = download(index, title, image_url, config).await;
                 pb.inc(1);
             });
         }
@@ -139,7 +145,8 @@ impl Gallery {
     }
 }
 
-async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config>) {
+#[retry(stop=(attempts(3)))]
+async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config>) -> Result<()> {
     let response = CLIENT
         .get()
         .unwrap()
@@ -197,7 +204,7 @@ async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config
 
     if image_url.is_empty() {
         error!("No image found for index {} at {}", index, url);
-        return;
+        anyhow::bail!("No image found");
     }
 
     let response = CLIENT
@@ -214,7 +221,7 @@ async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config
             image_url,
             response.status()
         );
-        return;
+        anyhow::bail!("Failed to download image");
     }
 
     let ext = image_url.rsplit('.').next().unwrap_or("jpg");
@@ -232,6 +239,8 @@ async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config
         file.write_all(&bytes.unwrap())
             .expect("Failed to write chunk to file");
     }
+
+    Ok(())
 }
 
 #[cfg(test)]
