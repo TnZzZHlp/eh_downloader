@@ -43,7 +43,7 @@ async fn main() -> Result<()> {
     let pb = PB.add(ProgressBar::new(gallerys.len() as u64));
     pb.set_style(
         indicatif::ProgressStyle::default_bar()
-            .template("[{elapsed_precise}] {wide_bar:cyan/blue}")
+            .template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] [{pos}/{len}]")
             .unwrap()
             .progress_chars("=>-"),
     );
@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
 
 fn init(config: &Config) -> Result<()> {
     // Initialize CLIENT
-    let mut builder = Client::builder().user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36 Edg/137.0.0.0");
+    let mut builder = Client::builder().user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36 Edg/137.0.0.0").redirect(reqwest::redirect::Policy::none());
 
     if let Some(proxy_str) = &config.proxy {
         let proxy = Proxy::all(proxy_str).context("Invalid proxy URL")?;

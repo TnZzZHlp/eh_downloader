@@ -5,7 +5,7 @@ use reqwest::Url;
 use std::{io::Write, path::PathBuf, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 
-use crate::{CLIENT, PB, SEM, config::Config, error, info};
+use crate::{CLIENT, PB, SEM, config::Config, error};
 
 #[derive(Debug)]
 pub struct Gallery {
@@ -106,29 +106,29 @@ impl Gallery {
             return;
         }
 
-        info!("Downloading gallery: {}", self.title);
-
         let mut tasks = JoinSet::new();
         let pb = Arc::new(PB.add(ProgressBar::new(self.images.len() as u64)));
         pb.enable_steady_tick(Duration::from_millis(100));
         pb.set_style(
             indicatif::ProgressStyle::default_bar()
-                .template("[{wide_bar:cyan/blue}] [{pos}/{len}] [{msg}] ({elapsed_precise})")
+                .template("[{wide_bar:.cyan/blue}] [{pos}/{len}] [{msg:<7}] ({elapsed_precise})")
                 .unwrap()
                 .progress_chars("=>-"),
         );
 
-        let title = Arc::new(self.title);
+        let title = Arc::new(
+            self.title
+                .replace(['/', '\\', ':', '*', '?', '"', '<', '>', '|'], ""),
+        );
 
         for (index, image_url) in self.images.into_iter().enumerate() {
             let title = Arc::clone(&title);
-            let ext = image_url.as_str().rsplit('.').next().unwrap_or("jpg");
-            let output_path = format!("{}/{}/{}.{}", config.output, title, index, ext);
+            let config = Arc::clone(&config);
             let pb = Arc::clone(&pb);
             tasks.spawn(async move {
                 let _limit = SEM.get().unwrap().acquire().await;
-                pb.set_message(format!("Downloading {} image {}", title, index + 1));
-                download(output_path, image_url).await;
+                pb.set_message(format!("Downloading image {}", index + 1));
+                download(index, title, image_url, config).await;
                 pb.inc(1);
             });
         }
@@ -139,36 +139,98 @@ impl Gallery {
     }
 }
 
-async fn download(output_path: String, url: Url) {
-    let output_path = PathBuf::from(output_path);
-    if !output_path.exists() {
-        let _ = std::fs::create_dir_all(output_path.parent().unwrap()).map_err(|e| {
-            error!("Failed to create output directory: {}", e);
-            std::process::exit(1);
-        });
-    }
-
+async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config>) {
     let response = CLIENT
         .get()
         .unwrap()
         .get(url.as_str())
+        .header("Cookie", &config.cookie)
         .send()
         .await
         .expect("Failed to send request");
 
-    if response.status().is_success() {
-        let mut stream = response.bytes_stream();
-        let mut file = std::fs::File::create(output_path).expect("Failed to create file");
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.expect("Failed to read chunk");
-            file.write_all(&chunk).expect("Failed to write chunk");
-        }
-    } else {
+    if !response.status().is_success() {
         error!(
             "Failed to download image from {}, status: {}",
             url,
             response.status()
         );
+    }
+
+    let mut image_url = String::new();
+    if config.original {
+        {
+            let document = scraper::Html::parse_document(&response.text().await.unwrap());
+            let selector = scraper::Selector::parse("div#i6 div:last-child a").unwrap();
+            if let Some(element) = document.select(&selector).next() {
+                if let Some(href) = element.value().attr("href") {
+                    image_url = href.to_string();
+                }
+            }
+        }
+
+        let redirect_url = CLIENT
+            .get()
+            .unwrap()
+            .get(image_url.as_str())
+            .header("Cookie", &config.cookie)
+            .send()
+            .await
+            .expect("Failed to send request for image redirect");
+
+        if redirect_url.status().is_redirection() {
+            if let Some(location) = redirect_url.headers().get(reqwest::header::LOCATION) {
+                if let Ok(loc_str) = location.to_str() {
+                    image_url = loc_str.to_string();
+                }
+            }
+        }
+    } else {
+        let selector = scraper::Selector::parse("div#i3 a img").unwrap();
+        let document = scraper::Html::parse_document(&response.text().await.unwrap());
+        if let Some(element) = document.select(&selector).next() {
+            if let Some(src) = element.value().attr("src") {
+                image_url = src.to_owned();
+            }
+        }
+    }
+
+    if image_url.is_empty() {
+        error!("No image found for index {} at {}", index, url);
+        return;
+    }
+
+    let response = CLIENT
+        .get()
+        .unwrap()
+        .get(&image_url)
+        .send()
+        .await
+        .expect("Failed to send request for image");
+
+    if !response.status().is_success() {
+        error!(
+            "Failed to download image from {}, status: {}",
+            image_url,
+            response.status()
+        );
+        return;
+    }
+
+    let ext = image_url.rsplit('.').next().unwrap_or("jpg");
+    let output_dir = PathBuf::from(&format!("{}/{}", config.output, title));
+    if !output_dir.exists() {
+        std::fs::create_dir_all(&output_dir).expect("Failed to create output directory");
+    }
+
+    let file_path = output_dir.join(format!("{}.{}", index + 1, ext));
+    let mut file = std::fs::File::create(&file_path).expect("Failed to create file");
+
+    let mut stream = response.bytes_stream();
+
+    while let Some(bytes) = stream.next().await {
+        file.write_all(&bytes.unwrap())
+            .expect("Failed to write chunk to file");
     }
 }
 
