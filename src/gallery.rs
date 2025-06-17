@@ -111,7 +111,7 @@ impl Gallery {
         pb.enable_steady_tick(Duration::from_millis(100));
         pb.set_style(
             indicatif::ProgressStyle::default_bar()
-                .template("[{wide_bar:.cyan/blue}] [{pos}/{len}] [{msg:<7}] ({elapsed_precise})")
+                .template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] [{pos}/{len}] [{msg:<7}] ")
                 .unwrap()
                 .progress_chars("=>-"),
         );

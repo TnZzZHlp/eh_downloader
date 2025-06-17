@@ -1,4 +1,7 @@
-use std::sync::{Arc, LazyLock, OnceLock};
+use std::{
+    sync::{Arc, LazyLock, OnceLock},
+    time::Duration,
+};
 
 use anyhow::{Context, Result};
 use clap::Parser;
@@ -41,6 +44,7 @@ async fn main() -> Result<()> {
     })?;
 
     let pb = PB.add(ProgressBar::new(gallerys.len() as u64));
+    pb.enable_steady_tick(Duration::from_millis(100));
     pb.set_style(
         indicatif::ProgressStyle::default_bar()
             .template("[{elapsed_precise}] [{wide_bar:.cyan/blue}] [{pos}/{len}]")
