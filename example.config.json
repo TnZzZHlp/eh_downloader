@@ -1,0 +1,6 @@
+{
+    "cookie": "your_cookie_here",
+    "concurrency": 3,
+    "input": "input.txt",
+    "output": "output"
+}
