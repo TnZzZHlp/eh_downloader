@@ -209,11 +209,10 @@ async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config
 
     let response = CLIENT
         .get()
-        .unwrap()
+        .ok_or(anyhow::anyhow!("Failed to create request for image"))?
         .get(&image_url)
         .send()
-        .await
-        .expect("Failed to send request for image");
+        .await?;
 
     if !response.status().is_success() {
         error!(
