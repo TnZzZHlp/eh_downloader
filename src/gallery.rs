@@ -133,7 +133,9 @@ impl Gallery {
             tasks.spawn(async move {
                 let _limit = SEM.get().unwrap().acquire().await;
                 pb.set_message(format!("Downloading image {}", index + 1));
-                let _ = download(index, title, image_url, config).await;
+                download(index, title, image_url, config)
+                    .await
+                    .unwrap_or_else(|e| error!("Failed to download image {}: {}", index + 1, e));
                 pb.inc(1);
             });
         }
