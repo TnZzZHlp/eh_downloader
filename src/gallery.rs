@@ -5,7 +5,7 @@ use retrying::retry;
 use std::{io::Write, path::PathBuf, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 
-use crate::{CLIENT, PB, SEM, config::Config, error, info};
+use crate::{CLIENT, PB, SEM, config::Config, error};
 
 #[derive(Debug)]
 pub struct Gallery {
@@ -178,8 +178,6 @@ async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config
             }
         }
     }
-
-    info!("Downloading image {} from {}", index + 1, image_url);
 
     if config.original {
         let mut has_origin = false;
