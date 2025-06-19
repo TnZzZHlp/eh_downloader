@@ -133,9 +133,9 @@ impl Gallery {
             tasks.spawn(async move {
                 let _limit = SEM.get().unwrap().acquire().await;
                 pb.set_message(format!("Downloading image {}", index + 1));
-                download(index, title, image_url.clone(), config)
+                download(index, title, image_url, config)
                     .await
-                    .unwrap_or_else(|e| error!("Failed to download image {}: {}", image_url, e));
+                    .unwrap_or_else(|e| error!("Failed to download image {}: {}", index + 1, e));
                 pb.inc(1);
             });
         }
@@ -179,6 +179,8 @@ async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config
         }
     }
 
+    info!("Downloading image {} from {}", index + 1, image_url);
+
     if config.original {
         let mut has_origin = false;
         {
@@ -186,8 +188,10 @@ async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config
             let selector = scraper::Selector::parse("div#i6 div:last-child a").unwrap();
             if let Some(element) = document.select(&selector).next() {
                 if let Some(href) = element.value().attr("href") {
-                    image_url = href.to_string();
-                    has_origin = true;
+                    if let Ok(href) = Url::parse(href) {
+                        image_url = href.to_string();
+                        has_origin = true;
+                    }
                 }
             }
         }
