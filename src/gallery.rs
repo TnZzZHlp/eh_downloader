@@ -133,9 +133,9 @@ impl Gallery {
             tasks.spawn(async move {
                 let _limit = SEM.get().unwrap().acquire().await;
                 pb.set_message(format!("Downloading image {}", index + 1));
-                download(index, title, image_url, config)
+                download(index, title, image_url.clone(), config)
                     .await
-                    .unwrap_or_else(|e| error!("Failed to download image {}: {}", index + 1, e));
+                    .unwrap_or_else(|e| error!("Failed to download image {}: {}", image_url, e));
                 pb.inc(1);
             });
         }
@@ -146,7 +146,7 @@ impl Gallery {
     }
 }
 
-#[retry(stop=(attempts(3)))]
+#[retry(stop = attempts(3))]
 async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config>) -> Result<()> {
     let response = CLIENT
         .get()
@@ -165,10 +165,23 @@ async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config
         );
     }
 
+    let text = response.text().await?;
+
     let mut image_url = String::new();
+
+    {
+        let selector = scraper::Selector::parse("div#i3 a img").unwrap();
+        let document = scraper::Html::parse_document(&text);
+        if let Some(element) = document.select(&selector).next() {
+            if let Some(src) = element.value().attr("src") {
+                image_url = src.to_owned();
+            }
+        }
+    }
+
     if config.original {
         {
-            let document = scraper::Html::parse_document(&response.text().await.unwrap());
+            let document = scraper::Html::parse_document(&text);
             let selector = scraper::Selector::parse("div#i6 div:last-child a").unwrap();
             if let Some(element) = document.select(&selector).next() {
                 if let Some(href) = element.value().attr("href") {
@@ -190,14 +203,6 @@ async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config
                 if let Ok(loc_str) = location.to_str() {
                     image_url = loc_str.to_string();
                 }
-            }
-        }
-    } else {
-        let selector = scraper::Selector::parse("div#i3 a img").unwrap();
-        let document = scraper::Html::parse_document(&response.text().await.unwrap());
-        if let Some(element) = document.select(&selector).next() {
-            if let Some(src) = element.value().attr("src") {
-                image_url = src.to_owned();
             }
         }
     }
