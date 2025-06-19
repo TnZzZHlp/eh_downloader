@@ -5,7 +5,7 @@ use retrying::retry;
 use std::{io::Write, path::PathBuf, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 
-use crate::{CLIENT, PB, SEM, config::Config, error};
+use crate::{CLIENT, PB, SEM, config::Config, error, info};
 
 #[derive(Debug)]
 pub struct Gallery {
@@ -180,28 +180,32 @@ async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config
     }
 
     if config.original {
+        let mut has_origin = false;
         {
             let document = scraper::Html::parse_document(&text);
             let selector = scraper::Selector::parse("div#i6 div:last-child a").unwrap();
             if let Some(element) = document.select(&selector).next() {
                 if let Some(href) = element.value().attr("href") {
                     image_url = href.to_string();
+                    has_origin = true;
                 }
             }
         }
 
-        let redirect_url = CLIENT
-            .get()
-            .unwrap()
-            .get(image_url.as_str())
-            .header("Cookie", &config.cookie)
-            .send()
-            .await?;
+        if has_origin {
+            let redirect_url = CLIENT
+                .get()
+                .unwrap()
+                .get(image_url.as_str())
+                .header("Cookie", &config.cookie)
+                .send()
+                .await?;
 
-        if redirect_url.status().is_redirection() {
-            if let Some(location) = redirect_url.headers().get(reqwest::header::LOCATION) {
-                if let Ok(loc_str) = location.to_str() {
-                    image_url = loc_str.to_string();
+            if redirect_url.status().is_redirection() {
+                if let Some(location) = redirect_url.headers().get(reqwest::header::LOCATION) {
+                    if let Ok(loc_str) = location.to_str() {
+                        image_url = loc_str.to_string();
+                    }
                 }
             }
         }
