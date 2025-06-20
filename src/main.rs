@@ -7,6 +7,8 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use indicatif::{MultiProgress, ProgressBar};
 use reqwest::{Client, Proxy};
+use reqwest_middleware::{ClientBuilder, ClientWithMiddleware};
+use reqwest_retry::{RetryTransientMiddleware, policies::ExponentialBackoff};
 
 use crate::config::Config;
 
@@ -14,7 +16,7 @@ mod config;
 mod gallery;
 mod utils;
 
-static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+static CLIENT: OnceLock<ClientWithMiddleware> = OnceLock::new();
 static SEM: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
 static PB: LazyLock<MultiProgress> = LazyLock::new(MultiProgress::new);
 
@@ -74,7 +76,14 @@ fn init(config: &Config) -> Result<()> {
 
     let client = builder.build().context("Failed to build HTTP client")?;
     CLIENT
-        .set(client)
+        .set(
+            ClientBuilder::new(client)
+                // Retry failed requests.
+                .with(RetryTransientMiddleware::new_with_policy(
+                    ExponentialBackoff::builder().build_with_max_retries(3),
+                ))
+                .build(),
+        )
         .expect("Failed to set the reqwest client");
 
     // Initialize SEM

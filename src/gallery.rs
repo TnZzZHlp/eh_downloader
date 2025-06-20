@@ -1,7 +1,7 @@
 use anyhow::Result;
+
 use indicatif::ProgressBar;
 use reqwest::Url;
-use retrying::retry;
 use std::{io::Write, path::PathBuf, sync::Arc, time::Duration};
 use tokio::task::JoinSet;
 
@@ -146,7 +146,6 @@ impl Gallery {
     }
 }
 
-#[retry(stop = attempts(3))]
 async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config>) -> Result<()> {
     let response = CLIENT
         .get()
@@ -154,8 +153,7 @@ async fn download(index: usize, title: Arc<String>, url: Url, config: Arc<Config
         .get(url.as_str())
         .header("Cookie", &config.cookie)
         .send()
-        .await
-        .expect("Failed to send request");
+        .await?;
 
     if !response.status().is_success() {
         error!(
